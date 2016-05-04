@@ -11,4 +11,4 @@ function environment_variable_error() {
 [[ -z ${AWS_ACCOUNT_ID} ]] && environment_variable_error
 
 
-docker run -e AWS_CONSOLIDATED_BILLING -e AWS_ACCOUNT_ID -e AWS_ACCESS_KEY -e AWS_SECRET_KEY -e AWS_REPORT_BUCKET -e AWS_REPORT_YEAR_MONTH oicrsofteng/aws-reporting bash report_runner.sh
+docker run -it -e AWS_CONSOLIDATED_BILLING -e AWS_ACCOUNT_ID -e AWS_ACCESS_KEY -e AWS_SECRET_KEY -e AWS_REPORT_BUCKET -e AWS_REPORT_YEAR_MONTH oicrsofteng/aws-reporting bash

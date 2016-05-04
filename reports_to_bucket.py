@@ -11,7 +11,7 @@ for root, dirs, files in os.walk('reports/'):
 
 s3_connect = boto.connect_s3(os.environ['AWS_ACCESS_KEY'], os.environ['AWS_SECRET_KEY'])
 
-dst_bucket = s3_connect.get_bucket("oicr.detailed.billing")
+dst_bucket = s3_connect.get_bucket(os.environ['AWS_REPORT_BUCKET'])
 my_key = boto.s3.key.Key(dst_bucket)
 
 def upload_one_file(report):
@@ -20,5 +20,5 @@ def upload_one_file(report):
 
 for i, report in enumerate(reports):
     print str(i+1) + "/" + str(len(reports)) + \
-          ") Uploading " + report + " to S3 bucket 'oicr.detailed.billing'..."
+          ") Uploading " + report + " to S3 bucket '" + os.environ['AWS_REPORT_BUCKET'] + "'..."
     upload_one_file(report)

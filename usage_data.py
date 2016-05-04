@@ -112,6 +112,8 @@ class Resource(object):
         """Get the KEEP tag from source, if it exists. Empty strings count as untagged in this version."""
         if 'KEEP' in obj.tags and len(obj.tags['KEEP'].strip()) != 0:
             return obj.tags['KEEP']
+        elif 'PROJECT' in obj.tags and len(obj.tags['PROJECT'].strip()) != 0:
+            return obj.tags['PROJECT']
         else:
             return "-------no-tag"
 

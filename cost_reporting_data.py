@@ -9,12 +9,19 @@ import os
 import csv
 from operator import itemgetter
 import pdb
+import re
+
+# TODO: need to switch to user:PROJECT from user:KEEP
 
 # TODO: not using global variables!
 untagged_volume_sum = 0
 untagged_s3_sum = 0
 untagged_egress_sum = 0
 year_month = ""
+# can be 'Cost' or 'BlendedCost'
+costModel = 'Cost';
+if os.environ['AWS_CONSOLIDATED_BILLING']:
+    costModel = 'BlendedCost'
 
 class SpreadsheetCache(object):
     def __init__(self):
@@ -24,7 +31,7 @@ class SpreadsheetCache(object):
         with open(self.filename) as f:
             temp_reader = csv.DictReader(f)
             for row in temp_reader:
-                if float(row['Cost']) != 0 and row['RecordType'] == "LineItem":
+                if float(row[costModel]) != 0 and row['RecordType'] == "LineItem":
                     if row['Operation'] == "" and row['UsageType'] == "":
                         row['Operation'] = "ProductName" + row['ProductName']
                         row['UsageType'] = "ProductName" + row['ProductName']
@@ -60,8 +67,14 @@ class SpreadsheetCache(object):
         # Doesn't return anything, just fixes the spreadsheet
         temp_sheet = list(self.spreadsheet)
         for line in temp_sheet:
-            line['user:KEEP'] = line['user:KEEP'].upper()
-            line['user:PROD'] = line['user:PROD'].lower()
+            try:
+                line['user:KEEP'] = line['user:KEEP'].upper()
+            except KeyError:
+                sys.exit("user:KEEP not found\n Make sure you setup 'Cost Allocation Tags' in your AWS account and select KEEP as one of these!")
+            try:
+                line['user:PROD'] = line['user:PROD'].lower()
+            except:
+                sys.exit("user:PROD not found\n Make sure you setup 'Cost Allocation Tags' in your AWS account and select PROD as one of these!")
         self.spreadsheet = list(temp_sheet)
         del temp_sheet
 
@@ -70,10 +83,12 @@ class SpreadsheetCache(object):
         """Grab today's billing report from the S3 bucket, extract into pwd, return filename
         Eventually: Grab a different month's billing report.
         """
-        prefix = "794321122735-aws-billing-detailed-line-items-with-resources-and-tags-"
+        prefix = os.environ['AWS_ACCOUNT_ID'] + "-aws-billing-detailed-line-items-with-resources-and-tags-"
         # Select desired month using date format "YYYY-MM"
         global year_month
         year_month = str(datetime.date.today().isoformat()[0:7])  # get the latest report for current month
+        if re.match(r'\d{4}\-\d{2}', os.environ['AWS_REPORT_YEAR_MONTH']):
+            year_month = os.environ['AWS_REPORT_YEAR_MONTH']
 #        year_month = "2015-10"  # or select your own month
         csv_filename = prefix + year_month + ".csv"
         zip_filename = csv_filename + ".zip"
@@ -81,7 +96,7 @@ class SpreadsheetCache(object):
         # mod_time = os.path.getmtime(csv_filename)
         if not os.path.isfile(csv_filename) or datetime.date.today() - datetime.date.fromtimestamp(os.path.getmtime(csv_filename)) > datetime.timedelta(days=0):
             conn = S3Connection(os.environ['AWS_ACCESS_KEY'], os.environ['AWS_SECRET_KEY'])
-            mybucket = conn.get_bucket('oicr.detailed.billing')
+            mybucket = conn.get_bucket(os.environ['AWS_REPORT_BUCKET'])
             print "Downloading " + zip_filename + "..."
             mykey = mybucket.get_key(zip_filename)
             mykey.get_contents_to_filename(zip_filename)
@@ -94,7 +109,7 @@ class SpreadsheetCache(object):
         """Sort data by ResourceId, KEEP, PROD, Operation, UsageType, Cost"""
         temp_sheet = list(self.spreadsheet)
         self.spreadsheet = list(sorted(temp_sheet, key=itemgetter('ResourceId', 'user:KEEP', 'user:PROD',
-                                                                  'Operation', 'UsageType', 'Cost')))
+                                                                  'Operation', 'UsageType', costModel)))
         del temp_sheet
 
     def get_resource_tags(self):
@@ -201,7 +216,7 @@ class SpreadsheetCache(object):
 def print_data():
     """Dump everything to take a look"""
     with open("blob.csv", 'w') as f:
-        fields = ['user:KEEP', 'ResourceId', 'Operation', 'UsageType', 'Production?', 'Cost']
+        fields = ['user:KEEP', 'ResourceId', 'Operation', 'UsageType', 'Production?', costModel]
         writer = csv.DictWriter(f, fieldnames=fields)
         writer.writeheader()
         for row in SC.spreadsheet:
@@ -210,7 +225,7 @@ def print_data():
                              'Operation': row['Operation'],
                              'UsageType': row['UsageType'],
                              'Production?': row['user:PROD'],
-                             'Cost': row['Cost']})
+                             costModel: row[costModel]})
 
 
 def subtotal(line_items):
@@ -219,7 +234,7 @@ def subtotal(line_items):
     """
     total_cost = 0
     for line in line_items:
-        total_cost += float(line['Cost'])
+        total_cost += float(line[costModel])
     return total_cost
 
 
@@ -251,13 +266,13 @@ def process_resource(line_items, res_id):
 
         with open("reports/" + keeper + "_report.csv", 'a') as f:
             fields = ['user:KEEP', 'ResourceId',  # 'Status, if available',
-                      'AvailabilityZone', 'Operation', 'UsageType', 'Production?', 'Cost']
+                      'AvailabilityZone', 'Operation', 'UsageType', 'Production?', costModel]
             writer = csv.DictWriter(f, fieldnames=fields)
             writer.writerow({'user:KEEP': keeper, 'ResourceId': res_id,
                              # 'Status, if available': status,
                              'AvailabilityZone': zone,
                              'Operation': line_items[0]['Operation'], 'UsageType': usage_type,
-                             'Production?': line_items[0]['user:PROD'], 'Cost': usage_cost})
+                             'Production?': line_items[0]['user:PROD'], costModel: usage_cost})
         cost_for_this_resource += usage_cost
 
     return cost_for_this_resource
@@ -274,7 +289,7 @@ def process_prod_type(line_items):
             keeper = "untagged"
         with open("reports/" + keeper + "_report.csv", 'a') as f:
             fields = ['user:KEEP', 'ResourceId',  # 'Status, if available',
-                      'AvailabilityZone', 'Operation', 'UsageType', 'Production?', 'Cost', 'subtot', 'subval']
+                      'AvailabilityZone', 'Operation', 'UsageType', 'Production?', costModel, 'subtot', 'subval']
             writer = csv.DictWriter(f, fieldnames=fields)
             writer.writerow({'subtot': "Subtotal for resource " + resource, 'subval': cost_for_this_resource})
         cost_for_this_production_type += cost_for_this_resource
@@ -295,7 +310,7 @@ def generate_one_report(keeper):
 
     with open("reports/" + report_name, 'w') as f:
         fields = ['user:KEEP', 'ResourceId',  # 'Status, if available',
-                  'AvailabilityZone', 'Operation', 'UsageType', 'Production?', 'Cost']
+                  'AvailabilityZone', 'Operation', 'UsageType', 'Production?', costModel]
         writer = csv.DictWriter(f, fieldnames=fields)
         writer.writerow({})
 #        writer.writerow({'user:KEEP': "Report for " + keeper + " from start of month to " + str(datetime.date.today())})
@@ -309,7 +324,7 @@ def generate_one_report(keeper):
         cost_for_this_production_type = process_prod_type([line_item for line_item in line_items if line_item['user:PROD'] == prod_type])
         with open("reports/" + report_name, 'a') as f:
             fields = ['user:KEEP', 'ResourceId',  # 'Status, if available',
-                      'AvailabilityZone', 'Operation', 'UsageType', 'Production?', 'Cost', 'subtot', 'subval']
+                      'AvailabilityZone', 'Operation', 'UsageType', 'Production?', costModel, 'subtot', 'subval']
             writer = csv.DictWriter(f, fieldnames=fields)
             writer.writerow({})
             writer.writerow({'subtot': "Subtotal for [non/]production:", 'subval': cost_for_this_production_type})
@@ -319,7 +334,7 @@ def generate_one_report(keeper):
     # K this is ugly but figure it out later
     with open("reports/" + report_name, 'a') as f:
         fields = ['user:KEEP', 'ResourceId',  # 'Status, if available',
-                  'AvailabilityZone', 'Operation', 'UsageType', 'Production?', 'Cost', 'subtot', 'subval']
+                  'AvailabilityZone', 'Operation', 'UsageType', 'Production?', costModel, 'subtot', 'subval']
         writer = csv.DictWriter(f, fieldnames=fields)
         total_cost_for_keeper = sum(cost_for_keeper.values())
         writer.writerow({'subtot': "TOTAL FOR " + keeper, 'subval': str(total_cost_for_keeper)})
@@ -348,7 +363,7 @@ def generate_untagged_overview():
         writer.writeheader()
         list_of_resources = []
         for resource in resource_ids:
-            resource_total = sum([float(x['Cost']) for x in unkept if x['ResourceId'] == resource])
+            resource_total = sum([float(x[costModel]) for x in unkept if x['ResourceId'] == resource])
 
             # expect a resource is of one ProductName type, but if not, dump the list
             product = [x['ProductName'] for x in unkept if x['ResourceId'] == resource]
@@ -383,7 +398,7 @@ def generate_untagged_overview():
         writer.writeheader()
         l_o_ops = []
         for op in operations:
-            op_total = sum([float(x['Cost']) for x in unkept if x['Operation'] == op])
+            op_total = sum([float(x[costModel]) for x in unkept if x['Operation'] == op])
 
             # Sorry this is awful
             # expect a resource is of one ProductName type, but if not, dump the list
@@ -411,7 +426,7 @@ def generate_untagged_overview():
         writer.writeheader()
         l_o_uses = []
         for usage in usage_types:
-            usage_total = sum([float(x['Cost']) for x in unkept if x['UsageType'] == usage])
+            usage_total = sum([float(x[costModel]) for x in unkept if x['UsageType'] == usage])
 
             # Sorry this is awful, again
             # expect a resource is of one ProductName type, but if not, dump the list
@@ -437,12 +452,12 @@ def generate_untagged_overview():
         global untagged_egress_sum
 
         # Volume usage
-        untagged_volume_sum = sum([float(x['Cost']) for x in unkept if "Volume" in x.get('UsageType')])
+        untagged_volume_sum = sum([float(x[costModel]) for x in unkept if "Volume" in x.get('UsageType')])
         writer.writerow({'ProductName': "Untagged total for volumes", 'UsageType': untagged_volume_sum})
         # Snapshots... are not an item listed?
         # AMIs... aren't listed either...
         # S3
-        untagged_s3_sum = sum([float(x['Cost']) for x in unkept if "Amazon Simple Storage Service" in x.get('ProductName')])
+        untagged_s3_sum = sum([float(x[costModel]) for x in unkept if "Amazon Simple Storage Service" in x.get('ProductName')])
         writer.writerow({'ProductName': "Untagged total for S3", 'UsageType': untagged_s3_sum})
         # Data egress: based on billing report of Nov 1, any outbound data is identified by:
         #   containing "Out" in the UsageType (ItemDescription confirms outbound data is being charged)
@@ -452,8 +467,8 @@ def generate_untagged_overview():
         #  Nearly no lines without "Out" in one of the two fields where ItemDescription refers to outbound data
         #    ^- exception is some PUT / uploads from S3; however, it does include some other S3 transfer operations
 
-        usage_type_egress = sum([float(x['Cost']) for x in unkept if "Out" in x.get('UsageType')])
-        operation_egress = sum([float(x['Cost']) for x in unkept if "Out" in x.get('Operation')])
+        usage_type_egress = sum([float(x[costModel]) for x in unkept if "Out" in x.get('UsageType')])
+        operation_egress = sum([float(x[costModel]) for x in unkept if "Out" in x.get('Operation')])
         untagged_egress_sum = usage_type_egress + operation_egress
         writer.writerow({'ProductName': "Untagged total for data egress (some overlap with S3)",
                          'UsageType': untagged_egress_sum})
