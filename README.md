@@ -36,3 +36,4 @@ Need to switch to:
 
 * ENV=[PROD|DEV], from the PROD tag currently (requires a rethink in the way this works since PROD doesn't look at value)
 * PURPOSE=[PROJECT_NAME|IDENTIFIER], from the KEEP tag currently
+* docker run -it -v `pwd`/reports:/root/aws-reporting/reports/ -e AWS_CONSOLIDATED_BILLING -e AWS_ACCOUNT_ID -e AWS_ACCESS_KEY -e AWS_SECRET_KEY -e AWS_REPORT_BUCKET -e AWS_REPORT_YEAR_MONTH oicrsofteng/aws-reporting bash
