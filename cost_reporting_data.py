@@ -11,7 +11,7 @@ from operator import itemgetter
 import pdb
 import re
 
-# TODO: need to switch to user:PROJECT from user:KEEP
+# TODO: need to switch to user:PROJECT from user:PURPOSE
 
 # TODO: not using global variables!
 untagged_volume_sum = 0
@@ -31,7 +31,7 @@ class SpreadsheetCache(object):
         with open(self.filename) as f:
             temp_reader = csv.DictReader(f)
             for row in temp_reader:
-                if float(row[costModel]) != 0 and row['RecordType'] == "LineItem":
+                if float(row[costModel]) > 0 and row['RecordType'] == "LineItem":
                     if row['Operation'] == "" and row['UsageType'] == "":
                         row['Operation'] = "ProductName" + row['ProductName']
                         row['UsageType'] = "ProductName" + row['ProductName']
@@ -43,11 +43,11 @@ class SpreadsheetCache(object):
 
         temp_keepers = set()
         for row in self.spreadsheet:
-            temp_keepers.add(row['user:KEEP'])
+            temp_keepers.add(row['user:PURPOSE'])
         self.keepers = list(temp_keepers)
         del temp_keepers
 
-        self.resources_tag_dict = {}  # key = resource id, value = {'user:KEEP': name, 'user:PROD': yes/}
+        self.resources_tag_dict = {}  # key = resource id, value = {'user:PURPOSE': name, 'user:ENV': yes/}
         self.get_resource_tags()  # populate above dictionary
         self.tag_past_items()
 
@@ -68,13 +68,13 @@ class SpreadsheetCache(object):
         temp_sheet = list(self.spreadsheet)
         for line in temp_sheet:
             try:
-                line['user:KEEP'] = line['user:KEEP'].upper()
+                line['user:PURPOSE'] = line['user:PURPOSE'].upper()
             except KeyError:
-                sys.exit("user:KEEP not found\n Make sure you setup 'Cost Allocation Tags' in your AWS account and select KEEP as one of these!")
+                sys.exit("user:PURPOSE not found\n Make sure you setup 'Cost Allocation Tags' in your AWS account and select PURPOSE as one of these!")
             try:
-                line['user:PROD'] = line['user:PROD'].lower()
+                line['user:ENV'] = line['user:ENV'].upper()
             except:
-                sys.exit("user:PROD not found\n Make sure you setup 'Cost Allocation Tags' in your AWS account and select PROD as one of these!")
+                sys.exit("user:ENV not found\n Make sure you setup 'Cost Allocation Tags' in your AWS account and select ENV as one of these!")
         self.spreadsheet = list(temp_sheet)
         del temp_sheet
 
@@ -106,27 +106,27 @@ class SpreadsheetCache(object):
         return csv_filename
 
     def sort_data(self):
-        """Sort data by ResourceId, KEEP, PROD, Operation, UsageType, Cost"""
+        """Sort data by ResourceId, PURPOSE, ENV, Operation, UsageType, Cost"""
         temp_sheet = list(self.spreadsheet)
-        self.spreadsheet = list(sorted(temp_sheet, key=itemgetter('ResourceId', 'user:KEEP', 'user:PROD',
+        self.spreadsheet = list(sorted(temp_sheet, key=itemgetter('ResourceId', 'user:PURPOSE', 'user:ENV',
                                                                   'Operation', 'UsageType', costModel)))
         del temp_sheet
 
     def get_resource_tags(self):
-        """Modifies (populates) dict of resource_id and {KEEP-tag, PROD-tag}-pairs
+        """Modifies (populates) dict of resource_id and {PURPOSE-tag, ENV-tag}-pairs
         v2: Some tags changed over time for a given resource. Retain most recent tag for the dictionary.
         """
         for row in self.spreadsheet:
             if row['ResourceId'] not in self.resources_tag_dict:
-                self.resources_tag_dict[row['ResourceId']] = {'user:KEEP': row['user:KEEP'],
-                                                              'user:PROD': row['user:PROD'],
+                self.resources_tag_dict[row['ResourceId']] = {'user:PURPOSE': row['user:PURPOSE'],
+                                                              'user:ENV': row['user:ENV'],
                                                               'age': SpreadsheetCache.get_time_comparator(row)}
-            if len(row['user:KEEP'].strip()) != 0\
+            if len(row['user:PURPOSE'].strip()) != 0\
                     and SpreadsheetCache.get_time_comparator(row) > self.resources_tag_dict[row['ResourceId']]['age']:
-                self.resources_tag_dict[row['ResourceId']]['user:KEEP'] = row['user:KEEP']
+                self.resources_tag_dict[row['ResourceId']]['user:PURPOSE'] = row['user:PURPOSE']
                 self.resources_tag_dict[row['ResourceId']]['age'] = self.get_time_comparator(row)
-            if len(row['user:PROD'].strip()) != 0:
-                self.resources_tag_dict[row['ResourceId']]['user:PROD'] = row['user:PROD']
+            if len(row['user:ENV'].strip()) != 0:
+                self.resources_tag_dict[row['ResourceId']]['user:ENV'] = row['user:ENV']
 
     def tag_past_items(self):
         """Tag untagged items if they became tagged at any time in the billing record"""
@@ -136,8 +136,8 @@ class SpreadsheetCache(object):
         for row in self.spreadsheet:
             i += 1
             if row['ResourceId'] in self.resources_tag_dict:
-                copy_list[i]['user:KEEP'] = self.resources_tag_dict[row['ResourceId']]['user:KEEP']
-                copy_list[i]['user:PROD'] = self.resources_tag_dict[row['ResourceId']]['user:PROD']
+                copy_list[i]['user:PURPOSE'] = self.resources_tag_dict[row['ResourceId']]['user:PURPOSE']
+                copy_list[i]['user:ENV'] = self.resources_tag_dict[row['ResourceId']]['user:ENV']
         self.spreadsheet = list(copy_list)
         del copy_list
 
@@ -216,25 +216,28 @@ class SpreadsheetCache(object):
 def print_data():
     """Dump everything to take a look"""
     with open("blob.csv", 'w') as f:
-        fields = ['user:KEEP', 'ResourceId', 'Operation', 'UsageType', 'Production?', costModel]
+        fields = ['user:PURPOSE', 'ResourceId', 'Operation', 'UsageType', 'Production?', costModel]
         writer = csv.DictWriter(f, fieldnames=fields)
         writer.writeheader()
         for row in SC.spreadsheet:
-            writer.writerow({'user:KEEP': row['user:KEEP'],
+            writer.writerow({'user:PURPOSE': row['user:PURPOSE'],
                              'ResourceId': row['ResourceId'],
                              'Operation': row['Operation'],
                              'UsageType': row['UsageType'],
-                             'Production?': row['user:PROD'],
+                             'Production?': row['user:ENV'],
                              costModel: row[costModel]})
 
 
 def subtotal(line_items):
     """ Returns subtotal for line_items.
-    Used for summing costs of this particular usage type, under this Operation, PROD-tag, KEEP-tag
+    Used for summing costs of this particular usage type, under this Operation, ENV-tag, PURPOSE-tag
     """
     total_cost = 0
     for line in line_items:
         total_cost += float(line[costModel])
+    # HACK: need to deal with negative costs
+    if total_cost < 0:
+        total_cost = 0
     return total_cost
 
 
@@ -245,7 +248,7 @@ def process_resource(line_items, res_id):
 
     for usage_type in usage_types:
         usage_cost = subtotal([line_item for line_item in line_items if line_item['UsageType'] == usage_type])
-        keeper = line_items[0].get('user:KEEP')
+        keeper = line_items[0].get('user:PURPOSE')
         if keeper == "":
             keeper = "untagged"
 
@@ -265,14 +268,14 @@ def process_resource(line_items, res_id):
         #             zone = [x for x in SC.live_resources if x['ResourceId'] == res_id][0]['zone']
 
         with open("reports/" + keeper + "_report.csv", 'a') as f:
-            fields = ['user:KEEP', 'ResourceId',  # 'Status, if available',
+            fields = ['user:PURPOSE', 'ResourceId',  # 'Status, if available',
                       'AvailabilityZone', 'Operation', 'UsageType', 'Production?', costModel]
             writer = csv.DictWriter(f, fieldnames=fields)
-            writer.writerow({'user:KEEP': keeper, 'ResourceId': res_id,
+            writer.writerow({'user:PURPOSE': keeper, 'ResourceId': res_id,
                              # 'Status, if available': status,
                              'AvailabilityZone': zone,
                              'Operation': line_items[0]['Operation'], 'UsageType': usage_type,
-                             'Production?': line_items[0]['user:PROD'], costModel: usage_cost})
+                             'Production?': line_items[0]['user:ENV'], costModel: usage_cost})
         cost_for_this_resource += usage_cost
 
     return cost_for_this_resource
@@ -284,11 +287,11 @@ def process_prod_type(line_items):
     cost_for_this_production_type = 0
     for resource in resources:
         cost_for_this_resource = process_resource([x for x in line_items if x['ResourceId'] == resource], resource)
-        keeper = line_items[0].get('user:KEEP')
+        keeper = line_items[0].get('user:PURPOSE')
         if keeper == "":
             keeper = "untagged"
         with open("reports/" + keeper + "_report.csv", 'a') as f:
-            fields = ['user:KEEP', 'ResourceId',  # 'Status, if available',
+            fields = ['user:PURPOSE', 'ResourceId',  # 'Status, if available',
                       'AvailabilityZone', 'Operation', 'UsageType', 'Production?', costModel, 'subtot', 'subval']
             writer = csv.DictWriter(f, fieldnames=fields)
             writer.writerow({'subtot': "Subtotal for resource " + resource, 'subval': cost_for_this_resource})
@@ -298,9 +301,11 @@ def process_prod_type(line_items):
 
 def generate_one_report(keeper):
     """Output all the subtotal info for the specified keeper"""
-    line_items = [x for x in SC.spreadsheet if x['user:KEEP'] == keeper]
+    line_items = [x for x in SC.spreadsheet if x['user:PURPOSE'] == keeper]
 
-    prod_types = set([x.get('user:PROD') for x in line_items])  # should be just "" or "yes" but just in case
+    #prod_types = set([x.get('user:ENV') for x in line_items])  # should be just "" or "yes" but just in case
+    # I think this just becomes PROD now
+    prod_types = ['PROD'];
 
     if keeper == "":
         keeper = "untagged"
@@ -309,21 +314,21 @@ def generate_one_report(keeper):
     print "Generating report for: " + keeper + "..."
 
     with open("reports/" + report_name, 'w') as f:
-        fields = ['user:KEEP', 'ResourceId',  # 'Status, if available',
+        fields = ['user:PURPOSE', 'ResourceId',  # 'Status, if available',
                   'AvailabilityZone', 'Operation', 'UsageType', 'Production?', costModel]
         writer = csv.DictWriter(f, fieldnames=fields)
         writer.writerow({})
-#        writer.writerow({'user:KEEP': "Report for " + keeper + " from start of month to " + str(datetime.date.today())})
-        writer.writerow({'user:KEEP': "Report for " + keeper + " for the month " + year_month})
+#        writer.writerow({'user:PURPOSE': "Report for " + keeper + " from start of month to " + str(datetime.date.today())})
+        writer.writerow({'user:PURPOSE': "Report for " + keeper + " for the month " + year_month})
         writer.writeheader()
 
         cost_for_keeper = {}
         # bunch all by non-production, production, or anything else in the list
     for prod_type in prod_types:
         # list of all line_items with that prod type, and process them
-        cost_for_this_production_type = process_prod_type([line_item for line_item in line_items if line_item['user:PROD'] == prod_type])
+        cost_for_this_production_type = process_prod_type([line_item for line_item in line_items if line_item['user:ENV'] == prod_type])
         with open("reports/" + report_name, 'a') as f:
-            fields = ['user:KEEP', 'ResourceId',  # 'Status, if available',
+            fields = ['user:PURPOSE', 'ResourceId',  # 'Status, if available',
                       'AvailabilityZone', 'Operation', 'UsageType', 'Production?', costModel, 'subtot', 'subval']
             writer = csv.DictWriter(f, fieldnames=fields)
             writer.writerow({})
@@ -333,7 +338,7 @@ def generate_one_report(keeper):
 
     # K this is ugly but figure it out later
     with open("reports/" + report_name, 'a') as f:
-        fields = ['user:KEEP', 'ResourceId',  # 'Status, if available',
+        fields = ['user:PURPOSE', 'ResourceId',  # 'Status, if available',
                   'AvailabilityZone', 'Operation', 'UsageType', 'Production?', costModel, 'subtot', 'subval']
         writer = csv.DictWriter(f, fieldnames=fields)
         total_cost_for_keeper = sum(cost_for_keeper.values())
@@ -345,7 +350,7 @@ def generate_one_report(keeper):
 def generate_untagged_overview():
     """Give just the right amount of detail to let us know where all the untagged resources are"""
     print "Generating untagged overview report..."
-    unkept = [x for x in SC.spreadsheet if len(x['user:KEEP'].strip()) == 0]
+    unkept = [x for x in SC.spreadsheet if len(x['user:PURPOSE'].strip()) == 0]
 
     with open("reports/untagged_sorted_reports.csv", 'w') as f:
 
@@ -487,7 +492,7 @@ def generate_reports():
         cost_for_keeper = generate_one_report(keeper)
         if keeper == '':
             keeper = 'untagged'  # may want to set this earlier
-        cost_for_keeper['user:KEEP'] = keeper
+        cost_for_keeper['user:PURPOSE'] = keeper
         costs_for_keepers.append(cost_for_keeper)
 
     # Overview of untagged resources
@@ -496,10 +501,10 @@ def generate_reports():
     # Summarize
     print "Generating summary report..."
     with open('reports/overall_keep+prod_summary.csv', 'w') as f:
-        fields = ['user:KEEP', 'non-production subtotal', 'production subtotal', 'user total']
+        fields = ['user:PURPOSE', 'non-production subtotal', 'production subtotal', 'user total']
         writer = csv.DictWriter(f, fieldnames=fields)
-#        writer.writerow({'user:KEEP': "Summary of costs from start of month to " + str(datetime.date.today())})
-        writer.writerow({'user:KEEP': "Summary of costs for month " + year_month})
+#        writer.writerow({'user:PURPOSE': "Summary of costs from start of month to " + str(datetime.date.today())})
+        writer.writerow({'user:PURPOSE': "Summary of costs for month " + year_month})
         writer.writeheader()
         writer.writerow({})
         for i in range(len(SC.keepers)):
@@ -509,15 +514,15 @@ def generate_reports():
             if '' not in costs_for_keepers[i]:
                 costs_for_keepers[i][''] = 0
             total = float(costs_for_keepers[i]['']) + float(costs_for_keepers[i]['yes'])
-            writer.writerow({'user:KEEP': costs_for_keepers[i]['user:KEEP'],
+            writer.writerow({'user:PURPOSE': costs_for_keepers[i]['user:PURPOSE'],
                              'non-production subtotal': costs_for_keepers[i][''],
                              'production subtotal': costs_for_keepers[i]['yes'],
                              'user total': total})
             # extra subtotals for breakdown of untagged costs
-            if costs_for_keepers[i]['user:KEEP'] is 'untagged':
-                writer.writerow({'user:KEEP': " untagged subtotal for volume usage", 'user total': untagged_volume_sum})
-                writer.writerow({'user:KEEP': " untagged subtotal for S3", 'user total': untagged_s3_sum})
-                writer.writerow({'user:KEEP': " untagged subtotal for data egress (some overlap with S3)",
+            if costs_for_keepers[i]['user:PURPOSE'] is 'untagged':
+                writer.writerow({'user:PURPOSE': " untagged subtotal for volume usage", 'user total': untagged_volume_sum})
+                writer.writerow({'user:PURPOSE': " untagged subtotal for S3", 'user total': untagged_s3_sum})
+                writer.writerow({'user:PURPOSE': " untagged subtotal for data egress (some overlap with S3)",
                                  'user total': untagged_egress_sum})
 
 
